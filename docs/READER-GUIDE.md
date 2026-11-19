@@ -2,6 +2,10 @@
 
 Choose how to start. Both routes lead to the same two programs in Unit 01 and the same catalog in Unit 02. You can do the folder setup before installing Odin. Unit 01, Section 2, walks you through installing or locating the compiler.
 
+**Free companion source code:** https://github.com/AsVezes/odin-book-code
+
+Download the source kit from that repository using **Code > Download ZIP**, or clone it with Git. It contains the reference checkpoints, labs, the Unit 26 report library, and verification tools used in later units. The book's introductory examples can still be typed without downloading anything. Original companion code is MIT-licensed; third-party dependencies have separate terms.
+
 | If you have… | Start here |
 |---|---|
 | The source kit for this edition | Extract it to its own folder, then use Route A to copy the two Unit 01 sources. |
