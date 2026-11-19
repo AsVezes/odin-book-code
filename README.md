@@ -44,7 +44,7 @@ The reader code is copied from the private editorial repository `AsVezes/Renda`,
 
 ## Usage rights
 
-Copyright © 2026 Elliot Veyran / As Vezes. An explicit open-source license has **not yet** been selected. Public access alone does not grant redistribution or relicensing rights.
+Copyright © 2026 Elliot Veyran / As Vezes. The original companion source code and associated project documentation in this repository are distributed under the [MIT License](LICENSE). You may use, modify, and redistribute them under its terms, including retaining the copyright and permission notice. Third-party libraries, tools, binaries, and assets have their own licenses and are not relicensed by this notice.
 
 ## Report a problem
 
