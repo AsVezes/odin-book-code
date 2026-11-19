@@ -6,6 +6,6 @@
 - **Included:** reader-facing `code/` reference sources, historical checkpoints, tests, examples, Arena Courier and native CLI verifier; the practical setup guide is copied to `docs/READER-GUIDE.md`.
 - **Excluded:** full book manuscript, EPUB, print PDF, internal QA logs, cover assets, publishing scripts, source-archive builder and manuscript-only validators.
 - **Verification:** source files are pinned to one Git commit; this copying operation does not constitute a fresh compile of all programs or license clearance of native third-party dependencies.
-- **Licensing:** explicit open-source license not yet chosen by the rights holder.
+- **Licensing:** the author selected the [MIT License](LICENSE) for the original companion source code and associated project documentation in this repository. The license does not override independent rights or license terms for third-party components.
 
 Readers should work through the units using their own copy of the code; reference checkpoints do not replace the progressively built projects. The public repository does not automatically update material already published through Amazon KDP.
