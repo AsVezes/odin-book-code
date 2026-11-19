@@ -1,0 +1,73 @@
+package main
+
+import "core:fmt"
+import "core:os"
+
+print_help :: proc() {
+    fmt.println("Resource catalog")
+    fmt.println("Usage: resource-catalog <command> [argument]")
+    fmt.println("Commands:")
+    fmt.println("  help                Show this help")
+    fmt.println("  check <path>        Check whether a path exists")
+    fmt.println("  list <directory>    List direct entry names")
+}
+
+// Check only path existence; this does not read or validate file contents.
+check_path :: proc(path: string) {
+    if len(path) == 0 {
+        fmt.eprintln("Error: provide a non-empty path.")
+        os.exit(2)
+    }
+
+    if os.exists(path) {
+        fmt.println("Found:", path)
+        return
+    }
+
+    fmt.eprintln("Not found or unavailable:", path)
+    os.exit(1)
+}
+
+main :: proc() {
+    // The first argument identifies the executable.
+    if len(os.args) == 1 {
+        print_help()
+        return
+    }
+
+    command := os.args[1]
+
+    if command == "help" || command == "--help" {
+        if len(os.args) != 2 {
+            fmt.eprintln("Error: help does not accept extra arguments.")
+            os.exit(2)
+        }
+        print_help()
+        return
+    }
+
+    if command == "check" {
+        if len(os.args) != 3 {
+            fmt.eprintln("Usage: resource-catalog check <path>")
+            os.exit(2)
+        }
+
+        check_path(os.args[2])
+        return
+    }
+
+    if command == "list" {
+        if len(os.args) != 3 || len(os.args[2]) == 0 {
+            fmt.eprintln("Usage: resource-catalog list <directory>")
+            os.exit(2)
+        }
+        if !list_entries(os.args[2]) {
+            os.exit(1)
+        }
+        return
+    }
+
+    fmt.eprintln("Unknown command:", command)
+    print_help()
+    os.exit(2)
+}

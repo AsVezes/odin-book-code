@@ -1,0 +1,56 @@
+package main
+
+import "core:fmt"
+import "core:os"
+
+print_help :: proc() {
+    fmt.println("Resource catalog")
+    fmt.println("Usage: resource-catalog <command> [argument]")
+    fmt.println("Commands:")
+    fmt.println("  help                Show this help")
+    fmt.println("  check <path>        Check whether a path exists")
+}
+
+main :: proc() {
+    // The first argument identifies the executable.
+    if len(os.args) == 1 {
+        print_help()
+        return
+    }
+
+    command := os.args[1]
+
+    if command == "help" || command == "--help" {
+        if len(os.args) != 2 {
+            fmt.eprintln("Error: help does not accept extra arguments.")
+            os.exit(2)
+        }
+        print_help()
+        return
+    }
+
+    if command == "check" {
+        if len(os.args) != 3 {
+            fmt.eprintln("Usage: resource-catalog check <path>")
+            os.exit(2)
+        }
+
+        path := os.args[2]
+        if len(path) == 0 {
+            fmt.eprintln("Error: provide a non-empty path.")
+            os.exit(2)
+        }
+
+        if os.exists(path) {
+            fmt.println("Found:", path)
+            return
+        }
+
+        fmt.eprintln("Not found or unavailable:", path)
+        os.exit(1)
+    }
+
+    fmt.eprintln("Unknown command:", command)
+    print_help()
+    os.exit(2)
+}

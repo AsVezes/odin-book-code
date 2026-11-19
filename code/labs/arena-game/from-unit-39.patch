@@ -1,0 +1,443 @@
+diff --git a/headless/main.odin b/headless/main.odin
+new file mode 100644
+index 0000000..0747c3a
+--- /dev/null
++++ b/headless/main.odin
+@@ -0,0 +1,37 @@
++package main
++
++import "core:fmt"
++import "core:os"
++import "../score"
++import "../sim"
++
++main :: proc() {
++    if len(os.args) == 1 {
++        arena := sim.replay(7, 600)
++        fmt.printf("ticks=%d points=%d remaining=%d phase=%v\n", arena.ticks, arena.points, arena.count, arena.phase)
++        return
++    }
++    if len(os.args) == 2 && os.args[1] == "profile" {
++        total: u64
++        for seed in 1..=10_000 {
++            arena := sim.replay(u32(seed), 600)
++            total += u64(arena.ticks) + u64(arena.points)
++        }
++        fmt.println("digest:", total)
++        return
++    }
++    if len(os.args) == 2 && os.args[1] == "score-smoke" {
++        best, result := score.load("arena.score")
++        fmt.println("read:", result, best)
++        if result == .Invalid || result == .IO_Error {
++            os.exit(1)
++        }
++        if !score.save("arena.score", "arena.score.tmp", max(best, 12)) {
++            fmt.eprintln("Could not save score")
++            os.exit(1)
++        }
++        return
++    }
++    fmt.eprintln("Usage: arena-headless [score-smoke|profile]")
++    os.exit(2)
++}
+diff --git a/score/score.odin b/score/score.odin
+new file mode 100644
+index 0000000..03b0567
+--- /dev/null
++++ b/score/score.odin
+@@ -0,0 +1,54 @@
++package score
++
++import "core:os"
++
++Read_Result :: enum { Valid, Missing, Invalid, IO_Error }
++
++encode :: proc(points: u32) -> [8]byte {
++    return {'A', 'R', '1', 0, byte(points), byte(points >> 8), byte(points >> 16), byte(points >> 24)}
++}
++
++decode :: proc(data: []byte) -> (u32, bool) {
++    if len(data) != 8 || data[0] != 'A' || data[1] != 'R' || data[2] != '1' || data[3] != 0 {
++        return 0, false
++    }
++    return u32(data[4]) | (u32(data[5]) << 8) | (u32(data[6]) << 16) | (u32(data[7]) << 24), true
++}
++
++load :: proc(path: string) -> (u32, Read_Result) {
++    file, err := os.open(path)
++    if err == .Not_Exist { return 0, .Missing }
++    if err != nil       { return 0, .IO_Error }
++    defer os.close(file)
++
++    buffer: [9]byte
++    used := 0
++    for used < len(buffer) {
++        read, read_error := os.read(file, buffer[used:])
++        used += read
++        if read_error == .EOF { break }
++        if read_error != nil    { return 0, .IO_Error }
++        if read == 0           { break }
++    }
++    points, ok := decode(buffer[:used])
++    if !ok { return 0, .Invalid }
++    return points, .Valid
++}
++
++save :: proc(path, temporary: string, points: u32) -> bool {
++    bytes := encode(points)
++    file, err := os.create(temporary)
++    if err != nil { return false }
++
++    written, write_error := os.write(file, bytes[:])
++    close_error := os.close(file)
++    if write_error != nil || close_error != nil || written != len(bytes) {
++        _ = os.remove(temporary)
++        return false
++    }
++    if os.rename(temporary, path) != nil {
++        _ = os.remove(temporary)
++        return false
++    }
++    return true
++}
+diff --git a/score/score_test.odin b/score/score_test.odin
+new file mode 100644
+index 0000000..20af09a
+--- /dev/null
++++ b/score/score_test.odin
+@@ -0,0 +1,16 @@
++package score
++
++import "core:testing"
++
++@(test)
++bytes_are_versioned :: proc(t: ^testing.T) {
++    sample := encode(0x01020304)
++    testing.expect(t, sample == [8]byte{'A', 'R', '1', 0, 4, 3, 2, 1})
++    result, ok := decode(sample[:])
++    testing.expect(t, ok && result == 0x01020304)
++    _, truncated := decode(sample[:7])
++    testing.expect(t, !truncated)
++    sample[2] = '2'
++    _, future := decode(sample[:])
++    testing.expect(t, !future)
++}
+diff --git a/sim/arena.odin b/sim/arena.odin
+index bbb561c..39fc21b 100644
+--- a/sim/arena.odin
++++ b/sim/arena.odin
+@@ -6,8 +6,8 @@ Player_Y :: 320
+ Tick_Seconds :: 1.0 / 60.0
+ Max_Objects :: 32
+ 
+-Phase :: enum { Playing, Finished }
+-Input :: struct { left, right: bool }
++Phase :: enum { Title, Playing, Paused, Finished }
++Input :: struct { left, right, start, pause: bool }
+ Drop :: struct { x, y: int, hazard: bool }
+ Arena :: struct {
+     phase: Phase,
+@@ -21,6 +21,24 @@ new_arena :: proc(seed: u32) -> Arena {
+     return Arena{player_x = Width / 2, seed = seed}
+ }
+ 
++control :: proc(arena: ^Arena, input: Input, restart_seed: u32) {
++    switch arena.phase {
++    case .Title, .Finished:
++        if input.start {
++            arena^ = new_arena(restart_seed)
++            arena.phase = .Playing
++        }
++    case .Playing:
++        if input.pause {
++            arena.phase = .Paused
++        }
++    case .Paused:
++        if input.pause {
++            arena.phase = .Playing
++        }
++    }
++}
++
+ next_random :: proc(seed: ^u32) -> u32 {
+     seed^ = seed^ * 1664525 + 1013904223
+     return seed^
+@@ -79,6 +97,7 @@ step :: proc(arena: ^Arena, input: Input) {
+ 
+ replay :: proc(seed: u32, steps: int) -> Arena {
+     arena := new_arena(seed)
++    control(&arena, Input{start = true}, seed)
+     for tick in 0..<steps {
+         step(&arena, Input{left = (tick / 30) % 2 == 0, right = (tick / 30) % 2 == 1})
+     }
+diff --git a/sim/arena_test.odin b/sim/arena_test.odin
+index e191ef2..913e9c9 100644
+--- a/sim/arena_test.odin
++++ b/sim/arena_test.odin
+@@ -3,8 +3,26 @@ package sim
+ import "core:testing"
+ 
+ @(test)
+-score_and_hazard :: proc(t: ^testing.T) {
++pause_and_bounds :: proc(t: ^testing.T) {
+     arena := new_arena(7)
++    control(&arena, Input{start = true}, 7)
++    for _ in 0..<100 {
++        step(&arena, Input{left = true})
++    }
++    testing.expect(t, arena.player_x == 12)
++    saved_tick := arena.ticks
++    control(&arena, Input{pause = true}, 7)
++    step(&arena, Input{right = true})
++    testing.expect(t, arena.phase == .Paused && arena.ticks == saved_tick && arena.player_x == 12)
++    control(&arena, Input{pause = true}, 7)
++    step(&arena, Input{right = true})
++    testing.expect(t, arena.ticks == saved_tick + 1 && arena.player_x == 17)
++}
++
++@(test)
++score_hazard_and_restart :: proc(t: ^testing.T) {
++    arena := new_arena(7)
++    control(&arena, Input{start = true}, 7)
+     arena.count = 2
+     arena.drops[0] = {x = 320, y = Player_Y - 4}
+     arena.drops[1] = {x = 320, y = Player_Y - 4}
+@@ -14,6 +32,8 @@ score_and_hazard :: proc(t: ^testing.T) {
+     arena.drops[0] = {x = 320, y = Player_Y - 4, hazard = true}
+     step(&arena, {})
+     testing.expect(t, arena.phase == .Finished && arena.points == 2)
++    control(&arena, Input{start = true}, 7)
++    testing.expect(t, arena.phase == .Playing && arena.points == 0 && arena.count == 0)
+ }
+ 
+ @(test)
+@@ -30,6 +50,7 @@ seed_and_full_capacity :: proc(t: ^testing.T) {
+ @(test)
+ movement_and_edges :: proc(t: ^testing.T) {
+     a := new_arena(7)
++    control(&a, Input{start = true}, 7)
+     step(&a, {})
+     testing.expect(t, a.player_x == 320)
+     step(&a, {left = true, right = true})
+@@ -50,18 +71,21 @@ movement_and_edges :: proc(t: ^testing.T) {
+ @(test)
+ contact_boundary_and_finished_freeze :: proc(t: ^testing.T) {
+     outside := new_arena(7)
++    control(&outside, Input{start = true}, 7)
+     outside.count = 1
+     outside.drops[0] = {x = 341, y = Player_Y - 4}
+     step(&outside, {})
+     testing.expect(t, outside.points == 0 && outside.count == 1)
+ 
+     inside := new_arena(7)
++    control(&inside, Input{start = true}, 7)
+     inside.count = 1
+     inside.drops[0] = {x = 340, y = Player_Y - 4}
+     step(&inside, {})
+     testing.expect(t, inside.points == 1 && inside.count == 0)
+ 
+     hazard := new_arena(7)
++    control(&hazard, Input{start = true}, 7)
+     hazard.count = 1
+     hazard.drops[0] = {x = 320, y = Player_Y - 4, hazard = true}
+     step(&hazard, {})
+@@ -74,6 +98,7 @@ contact_boundary_and_finished_freeze :: proc(t: ^testing.T) {
+ @(test)
+ spawn_tick_boundary :: proc(t: ^testing.T) {
+     a := new_arena(7)
++    control(&a, Input{start = true}, 7)
+     for i in 0..<23 {
+         step(&a, {})
+     }
+@@ -87,6 +112,7 @@ spawn_tick_boundary :: proc(t: ^testing.T) {
+ @(test)
+ full_capacity_spawn_tick_preserves_seed :: proc(t: ^testing.T) {
+     a := new_arena(7)
++    control(&a, Input{start = true}, 7)
+     a.ticks = 23
+     a.count = len(a.drops)
+     for i in 0..<a.count {
+@@ -103,6 +129,7 @@ full_capacity_spawn_tick_preserves_seed :: proc(t: ^testing.T) {
+ @(test)
+ swap_removal_visits_moved_drop :: proc(t: ^testing.T) {
+     arena := new_arena(7)
++    control(&arena, Input{start = true}, 7)
+     arena.count = 3
+     arena.drops[0] = {x = 320, y = Player_Y - 4}
+     arena.drops[1] = {x = 100, y = 10}
+@@ -120,6 +147,7 @@ swap_removal_visits_moved_drop :: proc(t: ^testing.T) {
+ @(test)
+ swap_removal_rechecks_replacement :: proc(t: ^testing.T) {
+     a := new_arena(7)
++    control(&a, Input{start = true}, 7)
+     a.count = 3
+     a.drops[0] = {x = 320, y = Player_Y - 4}
+     a.drops[1] = {x = 320, y = Player_Y - 4}
+@@ -129,6 +157,7 @@ swap_removal_rechecks_replacement :: proc(t: ^testing.T) {
+     testing.expect(t, a.drops[0] == Drop{})
+ 
+     b := new_arena(7)
++    control(&b, Input{start = true}, 7)
+     b.count = 2
+     b.drops[0] = {x = 320, y = Player_Y - 4, hazard = true}
+     b.drops[1] = {x = 320, y = Player_Y - 4}
+@@ -140,6 +169,7 @@ swap_removal_rechecks_replacement :: proc(t: ^testing.T) {
+ @(test)
+ offscreen_removal_does_not_skip_next_drop :: proc(t: ^testing.T) {
+     a := new_arena(7)
++    control(&a, Input{start = true}, 7)
+     a.count = 2
+     a.drops[0] = {x = 12, y = Height + 12}
+     a.drops[1] = {x = 320, y = Player_Y - 4}
+diff --git a/verify.py b/verify.py
+new file mode 100644
+index 0000000..690457b
+--- /dev/null
++++ b/verify.py
+@@ -0,0 +1,57 @@
++from pathlib import Path
++import subprocess
++import sys
++from tempfile import TemporaryDirectory
++
++
++def verify(binary):
++    if not __debug__:
++        raise SystemExit("Run the Arena verifier without Python optimization so assertions are enabled.")
++
++    with TemporaryDirectory() as path:
++        working = Path(path)
++        score = working / "arena.score"
++        staging = working / "arena.score.tmp"
++
++        def invoke(*args):
++            return subprocess.run([binary, *args], cwd=path, timeout=10, text=True, capture_output=True)
++
++        replay = invoke()
++        assert (replay.returncode, replay.stdout, replay.stderr) == (
++            0, "ticks=101 points=0 remaining=4 phase=Finished\n", ""
++        )
++        assert not score.exists() and not staging.exists()
++        repeat = invoke()
++        assert (repeat.returncode, repeat.stdout, repeat.stderr) == (
++            replay.returncode, replay.stdout, replay.stderr
++        )
++        assert not score.exists() and not staging.exists()
++        usage = invoke("bad-command")
++        assert (usage.returncode, usage.stdout, usage.stderr) == (
++            2, "", "Usage: arena-headless [score-smoke|profile]\n"
++        )
++        assert not score.exists() and not staging.exists()
++        first = invoke("score-smoke")
++        assert first.returncode == 0 and "Missing 0" in first.stdout
++        baseline = b"AR1\0\x0c\0\0\0"
++        assert score.read_bytes() == baseline and not staging.exists()
++        second = invoke("score-smoke")
++        assert second.returncode == 0 and "Valid 12" in second.stdout
++        assert score.read_bytes() == baseline
++
++        for invalid in (b"", b"AR2" + baseline[3:], baseline + b"x", b"AR1\0"):
++            score.write_bytes(invalid)
++            result = invoke("score-smoke")
++            assert result.returncode == 1 and "Invalid 0" in result.stdout
++            assert score.read_bytes() == invalid and not staging.exists()
++
++        score.write_bytes(baseline)
++        staging.mkdir()
++        failure = invoke("score-smoke")
++        assert failure.returncode == 1 and "Could not save score" in failure.stderr
++        assert score.read_bytes() == baseline
++    print("arena: replay, usage, score round-trip, corrupt-file preservation, staging failure PASS")
++
++
++if __name__ == "__main__":
++    verify(str(Path(sys.argv[1]).resolve()))
+diff --git a/window/main.odin b/window/main.odin
+index a5f85e4..561af68 100644
+--- a/window/main.odin
++++ b/window/main.odin
+@@ -1,26 +1,45 @@
+ package main
+ 
+-import "core:fmt"
+ import "core:os"
+ import "core:c"
++import "core:fmt"
+ import rl "vendor:raylib"
++import "../score"
+ import "../sim"
+ 
++Seed :: 7
++
+ main :: proc() {
+-    rl.InitWindow(sim.Width, sim.Height, "Arena Courier - first round")
++    rl.InitWindow(sim.Width, sim.Height, "Arena Courier")
+     if !rl.IsWindowReady() {
+-        fmt.eprintln("Could not initialize the window")
++        fmt.eprintln("Could not initialize the game window")
+         os.exit(1)
+     }
+     defer rl.CloseWindow()
+     rl.SetTargetFPS(60)
++
+     marker := load_marker()
+     defer release_marker(marker)
+ 
+-    arena := sim.new_arena(7)
++    arena := sim.new_arena(Seed)
++    best, load_result := score.load("arena.score")
++    save_allowed := load_result == .Missing || load_result == .Valid
++    save_failed := !save_allowed
+     elapsed: f64
++
+     for !rl.WindowShouldClose() {
+-        input := sim.Input{left = rl.IsKeyDown(.LEFT), right = rl.IsKeyDown(.RIGHT)}
++        input := sim.Input{
++            start = rl.IsKeyPressed(.ENTER),
++            pause = rl.IsKeyPressed(.P),
++            left = rl.IsKeyDown(.LEFT),
++            right = rl.IsKeyDown(.RIGHT),
++        }
++        previous_phase := arena.phase
++        sim.control(&arena, input, Seed)
++        phase_before_ticks := arena.phase
++        if previous_phase != arena.phase {
++            elapsed = 0
++        }
+         if arena.phase == .Playing {
+             elapsed += min(f64(rl.GetFrameTime()), 0.125)
+             for elapsed >= sim.Tick_Seconds && arena.phase == .Playing {
+@@ -28,6 +47,14 @@ main :: proc() {
+                 elapsed -= sim.Tick_Seconds
+             }
+         }
++        if phase_before_ticks == .Playing && arena.phase == .Finished && arena.points > best {
++            if save_allowed && score.save("arena.score", "arena.score.tmp", arena.points) {
++                best = arena.points
++                save_failed = false
++            } else {
++                save_failed = true
++            }
++        }
+ 
+         rl.BeginDrawing()
+         rl.ClearBackground(rl.RAYWHITE)
+@@ -45,8 +72,15 @@ main :: proc() {
+                 rl.DrawCircle(c.int(drop.x), c.int(drop.y), 7, rl.DARKGREEN)
+             }
+         }
+-        if arena.phase == .Finished {
+-            rl.DrawText("Round finished", 240, 165, 20, rl.DARKGRAY)
++        rl.DrawText(rl.TextFormat("Score: %d   Best: %d", arena.points, best), 12, 12, 20, rl.DARKGRAY)
++        switch arena.phase {
++        case .Title:    rl.DrawText("ENTER to start | Arrows move | P pauses", 84, 168, 20, rl.BLACK)
++        case .Paused:   rl.DrawText("Paused. Press P to resume.", 178, 168, 20, rl.BLACK)
++        case .Finished: rl.DrawText("Game over. ENTER restarts.", 175, 168, 20, rl.BLACK)
++        case .Playing:
++        }
++        if save_failed {
++            rl.DrawText("Best score could not be loaded or saved.", 12, 40, 16, rl.MAROON)
+         }
+         rl.EndDrawing()
+     }
